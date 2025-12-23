@@ -1,0 +1,11 @@
+## Interface: 11200
+## Title: |cff00ffffTattleTotem|r
+## Notes: Announces AoE casts, shackle breaks, and bad pulls in Naxxramas
+## Author: Jahfonte
+## Version: 1.0.0
+## SavedVariablesPerCharacter: TattleTotemDB
+
+SpellData.lua
+MinimapButton.lua
+Config.lua
+Core.lua
