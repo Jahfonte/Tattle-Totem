@@ -2,7 +2,7 @@
 ## Title: |cff00ffffTattleTotem|r
 ## Notes: Announces AoE casts, shackle breaks, and bad pulls in Naxxramas
 ## Author: Jahfonte
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariablesPerCharacter: TattleTotemDB
 
 SpellData.lua

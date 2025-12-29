@@ -135,7 +135,7 @@ local masterEnable = CreateCheckbox(
     20, -40,
     function(self)
         local cb = self or this
-        if not cb then return end
+        if not cb or not TattleTotemDB then return end
         TattleTotemDB.enabled = cb:GetChecked()
         TattleTotem_UpdateMinimapButton()
     end,
@@ -149,7 +149,7 @@ local debugMode = CreateCheckbox(
     20, -70,
     function(self)
         local cb = self or this
-        if not cb then return end
+        if not cb or not TattleTotemDB then return end
         TattleTotemDB.debugMode = cb:GetChecked()
         if TattleTotemDB.debugMode then
             DEFAULT_CHAT_FRAME:AddMessage("|cff00ffffTattleTotem:|r Debug ON - monitoring all zones")
@@ -175,7 +175,9 @@ local outputRadios = CreateRadioGroup(
     30, -135,
     "YELL",
     function(value)
-        TattleTotemDB.outputMethod = value
+        if TattleTotemDB then
+            TattleTotemDB.outputMethod = value
+        end
     end
 )
 
@@ -188,7 +190,7 @@ local monitor4HM = CreateCheckbox(
     30, -235,
     function(self)
         local cb = self or this
-        if not cb then return end
+        if not cb or not TattleTotemDB then return end
         TattleTotemDB.monitor4HM = cb:GetChecked()
     end,
     "Announce who pulled first (tracks first boss hit when out of combat)"
@@ -203,7 +205,7 @@ local ktAoE = CreateCheckbox(
     30, -300,
     function(self)
         local cb = self or this
-        if not cb then return end
+        if not cb or not TattleTotemDB or not TattleTotemDB.ktMonitor then return end
         TattleTotemDB.ktMonitor.aoe = cb:GetChecked()
     end,
     "Announce when players cast AoE spells during KT fight"
@@ -216,7 +218,7 @@ local ktShackle = CreateCheckbox(
     30, -325,
     function(self)
         local cb = self or this
-        if not cb then return end
+        if not cb or not TattleTotemDB or not TattleTotemDB.ktMonitor then return end
         TattleTotemDB.ktMonitor.shackle = cb:GetChecked()
     end,
     "Announce when a player breaks Shackle Undead on Guardian"
@@ -229,7 +231,7 @@ local ktPets = CreateCheckbox(
     30, -350,
     function(self)
         local cb = self or this
-        if not cb then return end
+        if not cb or not TattleTotemDB or not TattleTotemDB.ktMonitor then return end
         TattleTotemDB.ktMonitor.pets = cb:GetChecked()
     end,
     "Announce hunters who have pets out during KT fight"
@@ -353,6 +355,11 @@ SLASH_TATTLETOTEM2 = "/tt"
 
 SlashCmdList["TATTLETOTEM"] = function(msg)
     local cmd = string.lower(msg or "")
+
+    if not TattleTotemDB then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000TattleTotem:|r Not yet loaded. Try again.")
+        return
+    end
 
     if cmd == "" or cmd == "config" or cmd == "options" then
         TattleTotem_ToggleConfig()

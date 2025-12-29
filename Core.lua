@@ -3,6 +3,7 @@ local TattleTotem = CreateFrame("Frame", "TattleTotemFrame", UIParent)
 TattleTotem.recentCasts = {}
 TattleTotem.activeShackles = {}
 TattleTotem.guardianDoTs = {}
+TattleTotem.guardianHits = {} -- New: Tracks ALL direct hits on Guardians
 TattleTotem.horsemenPuller = nil
 TattleTotem.inCombat = false
 TattleTotem.inNaxxramas = false
@@ -125,6 +126,7 @@ function TattleTotem:OnZoneChange()
     self.horsemenPuller = nil
     self.activeShackles = {}
     self.guardianDoTs = {}
+    self.guardianHits = {}
     self.inCombat = false
     self.inKTEncounter = false
     self.guardiansActive = false
@@ -254,6 +256,14 @@ function TattleTotem:RecordAoECast(caster, spell)
     self.recentCasts[key] = GetTime()
 end
 
+function TattleTotem:RecordGuardianDamage(caster, spell)
+    if not caster or not spell then return end
+    if not self.guardianHits[caster] then
+        self.guardianHits[caster] = {}
+    end
+    self.guardianHits[caster][spell] = GetTime()
+end
+
 function TattleTotem:ReportAoE(caster, spell)
     if not self:CanReport(caster, spell) then
         return
@@ -275,24 +285,53 @@ function TattleTotem:OnSpellDamage(msg, forcedCaster)
     if not TattleTotemDB.ktMonitor.aoe then return end
     if not self.guardiansActive then return end
 
-    local caster, spell
+    local caster, spell, target
 
-    local _, _, c, s = string.find(msg, "(.+)'s (.+) hits")
+    -- Detect "caster's spell hits target"
+    local _, _, c, s, t = string.find(msg, "(.+)'s (.+) hits (.+) for")
+    if not c then
+         _, _, c, s, t = string.find(msg, "(.+)'s (.+) crits (.+) for")
+    end
+    
+    -- Detect "caster's spell hits" (implicit target) or old format
+    if not c then
+        _, _, c, s = string.find(msg, "(.+)'s (.+) hits")
+        if c and not t then t = "Unknown" end
+    end
     if not c then
         _, _, c, s = string.find(msg, "(.+)'s (.+) crits")
+        if c and not t then t = "Unknown" end
     end
 
+    -- Detect "Your spell hits target"
     if not c and forcedCaster then
-        _, _, s = string.find(msg, "Your (.+) hits")
+        _, _, s, t = string.find(msg, "Your (.+) hits (.+) for")
         if not s then
-            _, _, s = string.find(msg, "Your (.+) crits")
+            _, _, s, t = string.find(msg, "Your (.+) crits (.+) for")
         end
-        c = forcedCaster
+        if s then 
+            c = forcedCaster 
+        end
+    end
+    
+    if not c and forcedCaster then
+         _, _, s = string.find(msg, "Your (.+) hits")
+         if not s then _, _, s = string.find(msg, "Your (.+) crits") end
+         if s then 
+             c = forcedCaster 
+             t = "Unknown" -- Could be current target, but safer to leave unknown if not parsed
+         end
     end
 
     if c and s then
         local baseSpell = string.gsub(s, " %(Rank %d+%)", "")
 
+        -- Track direct hits on Guardian (Single Target OR AoE)
+        if t == "Guardian of Icecrown" then
+            self:RecordGuardianDamage(c, baseSpell)
+        end
+
+        -- Monitor AoE Whitelist
         if TattleTotem_AoESpells[baseSpell] and TattleTotemDB.spells[baseSpell] then
             self:RecordAoECast(c, baseSpell)
             self:ReportAoE(c, baseSpell)
@@ -317,24 +356,27 @@ function TattleTotem:OnPeriodicDamage(msg)
     if not TattleTotemDB.enabled then return end
     self:UpdateKTEncounterFromLog(msg)
     if not TattleTotemDB.ktMonitor.shackle then return end
-    if not string.find(msg, "Guardian of Icecrown") then return end
-
+    
+    -- Check for Periodic AoE warnings (e.g., Consecration)
     local caster, spell
-
-    local _, _, c, s = string.find(msg, "(.+)'s (.+) hits Guardian of Icecrown")
+    local _, _, c, s = string.find(msg, "(.+)'s (.+) hits")
+    if not c then _, _, c, s = string.find(msg, "(.+)'s (.+) crits") end
+    
     if not c then
-        _, _, c, s = string.find(msg, "(.+)'s (.+) crits Guardian of Icecrown")
+        _, _, s = string.find(msg, "Your (.+) hits")
+        if not s then _, _, s = string.find(msg, "Your (.+) crits") end
+        if s then c = UnitName("player") end
+    end
+    
+    if c and s then
+        local baseSpell = string.gsub(s, " %(Rank %d+%)", "")
+        if TattleTotem_AoESpells[baseSpell] and TattleTotemDB.spells[baseSpell] then
+            self:ReportAoE(c, baseSpell)
+        end
     end
 
-    if not c then
-        _, _, s = string.find(msg, "Your (.+) hits Guardian of Icecrown")
-        if not s then
-            _, _, s = string.find(msg, "Your (.+) crits Guardian of Icecrown")
-        end
-        if s then
-            c = UnitName("player")
-        end
-    end
+    -- Existing Guardian DoT Tracking
+    if not string.find(msg, "Guardian of Icecrown") then return end
 
     if c and s then
         local baseSpell = string.gsub(s, " %(Rank %d+%)", "")
@@ -366,38 +408,59 @@ end
 
 function TattleTotem:CheckShackleBreaker()
     local now = GetTime()
-    local window = 0.5
+    local window = 0.5 -- Very tight window for instant break detection
     local reported = {}
 
+    -- Check Recent AoE Casts
     for key, timestamp in pairs(self.recentCasts) do
         if (now - timestamp) < window then
             local _, _, caster, spell = string.find(key, "(.+)_(.+)")
             if caster and spell and not string.find(key, "_reported") then
-                local message = caster .. " BROKE SHACKLE! (" .. spell .. ")"
-                reported[caster] = true
-
-                if TattleTotemDB.debugMode then
-                    DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[TattleTotem]|r " .. message)
-                else
-                    SendChatMessage(message, TattleTotemDB.outputMethod)
+                local message = caster .. " BROKE SHACKLE! (AoE: " .. spell .. ")"
+                if not reported[caster] then
+                    reported[caster] = true
+                    if TattleTotemDB.debugMode then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[TattleTotem]|r " .. message)
+                    else
+                        SendChatMessage(message, TattleTotemDB.outputMethod)
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Check Recent Guardian Hits (Single Target or any hit)
+    local directWindow = 1.0 
+    for caster, spells in pairs(self.guardianHits) do
+        if not reported[caster] then
+            for spell, timestamp in pairs(spells) do
+                if (now - timestamp) < directWindow then
+                    local message = caster .. " BROKE SHACKLE! (Hit: " .. spell .. ")"
+                    reported[caster] = true
+                    if TattleTotemDB.debugMode then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[TattleTotem]|r " .. message)
+                    else
+                        SendChatMessage(message, TattleTotemDB.outputMethod)
+                    end
+                    break -- Report once per caster
                 end
             end
         end
     end
 
+    -- Check DoTs
     local dotWindow = 10
     for caster, spells in pairs(self.guardianDoTs) do
         if not reported[caster] then
             for spell, timestamp in pairs(spells) do
                 if (now - timestamp) < dotWindow then
                     local message = caster .. " had DoT on Guardian! (" .. spell .. ")"
-
+                    reported[caster] = true
                     if TattleTotemDB.debugMode then
                         DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[TattleTotem]|r " .. message)
                     else
                         SendChatMessage(message, TattleTotemDB.outputMethod)
                     end
-                    reported[caster] = true
                     break
                 end
             end
@@ -405,6 +468,7 @@ function TattleTotem:CheckShackleBreaker()
     end
 
     self.guardianDoTs = {}
+    self.guardianHits = {} -- Clear hits after checking
 end
 
 function TattleTotem:OnBossAttack(msg)
@@ -504,6 +568,7 @@ function TattleTotem:OnCombatEnd()
     self.horsemenPuller = nil
     self.activeShackles = {}
     self.guardianDoTs = {}
+    self.guardianHits = {}
     self.inKTEncounter = false
     self.guardiansActive = false
     self.ktDetectedAnnounced = false
@@ -519,6 +584,14 @@ function TattleTotem:CleanupReports()
     for key, timestamp in pairs(self.recentCasts) do
         if timestamp < cutoff then
             self.recentCasts[key] = nil
+        end
+    end
+    
+    for caster, spells in pairs(self.guardianHits) do
+        for spell, timestamp in pairs(spells) do
+            if timestamp < cutoff then
+                spells[spell] = nil
+            end
         end
     end
 end
